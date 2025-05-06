@@ -201,29 +201,82 @@ public class OrderServiceImpl implements OrderService {
      * @param ordersPaymentDTO
      * @return
      */
-    public OrderPaymentVO payment(OrdersPaymentDTO ordersPaymentDTO) {
+    public OrderPaymentVO payment(OrdersPaymentDTO ordersPaymentDTO) throws Exception {
+        // 当前登录用户id
+        Long userId = BaseContext.getCurrentId();
+        User user = userMapper.getById(userId);
 
-        OrderPaymentVO vo = new OrderPaymentVO();
-        vo.setNonceStr("666");
-        vo.setPaySign("hhh");
-        vo.setPackageStr("prepay_id=wx");
-        vo.setSignType("RSA");
-        vo.setTimeStamp("1670380960");
+//        //调用微信支付接口，生成预支付交易单
+//        JSONObject jsonObject = weChatPayUtil.pay(
+//                ordersPaymentDTO.getOrderNumber(), //商户订单号
+//                new BigDecimal(0.01), //支付金额，单位 元
+//                "苍穹外卖订单", //商品描述
+//                user.getOpenid() //微信用户的openid
+//        );
+
+        //生成空JSON，跳过微信支付流程
+        JSONObject jsonObject = new JSONObject();
+
+        if (jsonObject.getString("code") != null && jsonObject.getString("code").equals("ORDERPAID")) {
+            throw new OrderBusinessException("该订单已支付");
+        }
+
+        OrderPaymentVO vo = jsonObject.toJavaObject(OrderPaymentVO.class);
+        vo.setPackageStr(jsonObject.getString("package"));
+        // 模拟支付成功，更新数据库订单状态
+        // 根据订单id更新订单的状态、支付方式、支付状态、结账时间
+        // 根据订单号查询订单
+        Orders ordersDB = orderMapper.getByNumberAndUserId(ordersPaymentDTO.getOrderNumber(), userId);
+        Orders orders = Orders.builder()
+                .id(ordersDB.getId())
+                .status(Orders.TO_BE_CONFIRMED)
+                .payStatus(Orders.PAID)
+                .checkoutTime(LocalDateTime.now())
+                .build();
+        orderMapper.update(orders);
 
         return vo;
     }
-
     /**
      * 支付成功，修改订单状态
      *
      * @param outTradeNo
      */
+//    public void paySuccess(String outTradeNo) {
+//        // 当前登录用户id
+//        Long userId = BaseContext.getCurrentId();
+//
+//        // 根据订单号查询当前用户的订单
+//        Orders ordersDB = orderMapper.getByNumberAndUserId(outTradeNo, userId);
+//
+//        // 根据订单id更新订单的状态、支付方式、支付状态、结账时间
+//        Orders orders = Orders.builder()
+//                .id(ordersDB.getId())
+//                .status(Orders.TO_BE_CONFIRMED)
+//                .payStatus(Orders.PAID)
+//                .checkoutTime(LocalDateTime.now())
+//                .build();
+//
+//        orderMapper.update(orders);
+//        //////////////////////////////////////////////
+//        Map map = new HashMap();
+//        map.put("type", 1);//消息类型，1表示来单提醒
+//        map.put("orderId", orders.getId());
+//        map.put("content", "订单号：" + outTradeNo);
+//
+//        //通过WebSocket实现来单提醒，向客户端浏览器推送消息
+//        webSocketServer.sendToAllClient(JSON.toJSONString(map));
+//        ///////////////////////////////////////////////////
+//    }
     public void paySuccess(String outTradeNo) {
         // 当前登录用户id
         Long userId = BaseContext.getCurrentId();
 
         // 根据订单号查询当前用户的订单
         Orders ordersDB = orderMapper.getByNumberAndUserId(outTradeNo, userId);
+
+        // 根据订单号查询订单
+//        Orders ordersDB = orderMapper.getByNumber(outTradeNo);
 
         // 根据订单id更新订单的状态、支付方式、支付状态、结账时间
         Orders orders = Orders.builder()
@@ -232,17 +285,17 @@ public class OrderServiceImpl implements OrderService {
                 .payStatus(Orders.PAID)
                 .checkoutTime(LocalDateTime.now())
                 .build();
-
         orderMapper.update(orders);
-        //////////////////////////////////////////////
-        Map map = new HashMap();
-        map.put("type", 1);//消息类型，1表示来单提醒
-        map.put("orderId", orders.getId());
-        map.put("content", "订单号：" + outTradeNo);
 
-        //通过WebSocket实现来单提醒，向客户端浏览器推送消息
-        webSocketServer.sendToAllClient(JSON.toJSONString(map));
-        ///////////////////////////////////////////////////
+        //通过WebSocket实现来单提醒  type orderId content
+        Map map = new HashMap<>();
+        map.put("type", 1);//消息类型，1表示来单提醒 2表示客户催单
+        map.put("orderID", ordersDB.getId());//订单id
+        map.put("content", "订单号：" + outTradeNo);
+        //通过websocket向客户端浏览器推送消息
+        String json = JSON.toJSONString(map);
+        webSocketServer.sendToAllClient(json);
+
     }
 
     /**
@@ -423,6 +476,43 @@ public class OrderServiceImpl implements OrderService {
      *
      * @param ordersRejectionDTO
      */
+//    public void rejection(OrdersRejectionDTO ordersRejectionDTO) throws Exception {
+//        // 根据id查询订单
+//        Orders ordersDB = orderMapper.getById(ordersRejectionDTO.getId());
+//
+//        // 订单只有存在且状态为2（待接单）才可以拒单
+//        if (ordersDB == null || !ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
+//            throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
+//        }
+//
+//        //支付状态
+//        Integer payStatus = ordersDB.getPayStatus();
+//        if (payStatus == Orders.PAID) {
+//            //用户已支付，需要退款
+//            String refund = weChatPayUtil.refund(
+//                    ordersDB.getNumber(),
+//                    ordersDB.getNumber(),
+//                    new BigDecimal(0.01),
+//                    new BigDecimal(0.01));
+//            log.info("申请退款：{}", refund);
+//        }
+//
+//        // 拒单需要退款，根据订单id更新订单状态、拒单原因、取消时间
+//        Orders orders = new Orders();
+//        orders.setId(ordersDB.getId());
+//        orders.setStatus(Orders.CANCELLED);
+//        orders.setRejectionReason(ordersRejectionDTO.getRejectionReason());
+//        orders.setCancelTime(LocalDateTime.now());
+//
+//        orderMapper.update(orders);
+//    }
+
+
+    /**
+     * 拒单
+     *
+     * @param ordersRejectionDTO
+     */
     public void rejection(OrdersRejectionDTO ordersRejectionDTO) throws Exception {
         // 根据id查询订单
         Orders ordersDB = orderMapper.getById(ordersRejectionDTO.getId());
@@ -435,17 +525,21 @@ public class OrderServiceImpl implements OrderService {
         //支付状态
         Integer payStatus = ordersDB.getPayStatus();
         if (payStatus == Orders.PAID) {
+            //跳过 weChatPayUtil.refund调用，模拟给用户退款，直接更新数据库订单支付状态为 ”已退款 “
             //用户已支付，需要退款
-            String refund = weChatPayUtil.refund(
-                    ordersDB.getNumber(),
-                    ordersDB.getNumber(),
-                    new BigDecimal(0.01),
-                    new BigDecimal(0.01));
-            log.info("申请退款：{}", refund);
+//            String refund = weChatPayUtil.refund(
+//                    ordersDB.getNumber(),
+//                    ordersDB.getNumber(),
+//                    new BigDecimal(0.01),
+//                    new BigDecimal(0.01));
+//            log.info("申请退款：{}", refund);
+            log.info("给订单{}退款", ordersDB.getNumber());
         }
 
         // 拒单需要退款，根据订单id更新订单状态、拒单原因、取消时间
         Orders orders = new Orders();
+        orders.setPayStatus(Orders.REFUND);//修改订单支付状态为 ”已退款 “
+
         orders.setId(ordersDB.getId());
         orders.setStatus(Orders.CANCELLED);
         orders.setRejectionReason(ordersRejectionDTO.getRejectionReason());
@@ -453,12 +547,36 @@ public class OrderServiceImpl implements OrderService {
 
         orderMapper.update(orders);
     }
-
     /**
      * 取消订单
      *
      * @param ordersCancelDTO
      */
+//    public void cancel(OrdersCancelDTO ordersCancelDTO) throws Exception {
+//        // 根据id查询订单
+//        Orders ordersDB = orderMapper.getById(ordersCancelDTO.getId());
+//
+//        //支付状态
+//        Integer payStatus = ordersDB.getPayStatus();
+//        if (payStatus == 1) {
+//            //用户已支付，需要退款
+//            String refund = weChatPayUtil.refund(
+//                    ordersDB.getNumber(),
+//                    ordersDB.getNumber(),
+//                    new BigDecimal(0.01),
+//                    new BigDecimal(0.01));
+//            log.info("申请退款：{}", refund);
+//        }
+//
+//        // 管理端取消订单需要退款，根据订单id更新订单状态、取消原因、取消时间
+//        Orders orders = new Orders();
+//        orders.setId(ordersCancelDTO.getId());
+//        orders.setStatus(Orders.CANCELLED);
+//        orders.setCancelReason(ordersCancelDTO.getCancelReason());
+//        orders.setCancelTime(LocalDateTime.now());
+//        orderMapper.update(orders);
+//    }
+
     public void cancel(OrdersCancelDTO ordersCancelDTO) throws Exception {
         // 根据id查询订单
         Orders ordersDB = orderMapper.getById(ordersCancelDTO.getId());
@@ -466,17 +584,21 @@ public class OrderServiceImpl implements OrderService {
         //支付状态
         Integer payStatus = ordersDB.getPayStatus();
         if (payStatus == 1) {
+            //跳过 weChatPayUtil.refund调用，模拟给用户退款，直接更新数据库订单支付状态为 ”已退款 “
             //用户已支付，需要退款
-            String refund = weChatPayUtil.refund(
-                    ordersDB.getNumber(),
-                    ordersDB.getNumber(),
-                    new BigDecimal(0.01),
-                    new BigDecimal(0.01));
-            log.info("申请退款：{}", refund);
+//            String refund = weChatPayUtil.refund(
+//                    ordersDB.getNumber(),
+//                    ordersDB.getNumber(),
+//                    new BigDecimal(0.01),
+//                    new BigDecimal(0.01));
+//            log.info("申请退款：{}", refund);
+            log.info("给订单{}退款", ordersDB.getNumber());
         }
 
         // 管理端取消订单需要退款，根据订单id更新订单状态、取消原因、取消时间
         Orders orders = new Orders();
+        orders.setPayStatus(Orders.REFUND);//修改订单支付状态为 ”已退款 “
+
         orders.setId(ordersCancelDTO.getId());
         orders.setStatus(Orders.CANCELLED);
         orders.setCancelReason(ordersCancelDTO.getCancelReason());

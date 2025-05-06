@@ -1,9 +1,13 @@
 package com.sky.controller.admin;
 
+import com.sky.constant.MessageConstant;
 import com.sky.dto.OrdersCancelDTO;
 import com.sky.dto.OrdersConfirmDTO;
 import com.sky.dto.OrdersPageQueryDTO;
 import com.sky.dto.OrdersRejectionDTO;
+import com.sky.entity.Orders;
+import com.sky.exception.OrderBusinessException;
+import com.sky.mapper.OrderMapper;
 import com.sky.result.PageResult;
 import com.sky.result.Result;
 import com.sky.service.OrderService;
@@ -15,6 +19,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
+
 /**
  * 订单管理
  */
@@ -24,6 +30,8 @@ import org.springframework.web.bind.annotation.*;
 @Api(tags = "订单管理接口")
 public class OrderController {
 
+    @Autowired
+    private OrderMapper orderMapper;
     @Autowired
     private OrderService orderService;
 
@@ -88,6 +96,8 @@ public class OrderController {
         orderService.rejection(ordersRejectionDTO);
         return Result.success();
     }
+
+
 
     /**
      * 取消订单
