@@ -58,7 +58,10 @@ public class OrderServiceImpl implements OrderService {
     private AddressBookMapper addressBookMapper;
     @Autowired
     private WebSocketServer webSocketServer;
-
+    @Autowired
+    private UserMapper userMapper;
+    @Autowired
+    private WeChatPayUtil weChatPayUtil;
 
 
     /**
@@ -134,24 +137,25 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public OrderSubmitVO submitOrder(OrdersSubmitDTO ordersSubmitDTO) {
         //1.异常情况处理（1.收货地址为空 2.超出配送范围 3.购物车为空）
+        //1.1检查用户的收货地址是否为空
         AddressBook addressBook = addressBookMapper.getById(ordersSubmitDTO.getAddressBookId());
         if (addressBook == null) {
             throw new AddressBookBusinessException(MessageConstant.ADDRESS_BOOK_IS_NULL); //抛出自定义异常
         }
 
-        //检查用户的收货地址是否超出配送范围
+        //1.2检查用户的收货地址是否超出配送范围
         //checkOutOfRange(addressBook.getCityName() + addressBook.getDistrictName() + addressBook.getDetail());
 
+        //1.3检查用户的购物车是否为空
         Long userId = BaseContext.getCurrentId();   //当前用户id
         ShoppingCart shoppingCart = new ShoppingCart();
         shoppingCart.setUserId(userId);
-
         List<ShoppingCart> shoppingCartList = shoppingCartMapper.list(shoppingCart); //查询当前用户的购物车数据
         if (shoppingCartList == null || shoppingCartList.size() == 0) {
             throw new ShoppingCartBusinessException(MessageConstant.SHOPPING_CART_IS_NULL);
         }
 
-        //2.构造订单数据
+        //2.构造订单数据(从DTO复制、从用户的Addressbook对象复制)
         Orders order = new Orders();
         BeanUtils.copyProperties(ordersSubmitDTO, order);
         order.setPhone(addressBook.getPhone());
@@ -166,7 +170,7 @@ public class OrderServiceImpl implements OrderService {
         //插入订单表
         orderMapper.insert(order);
 
-        //3.订单明细数据构造
+        //3.订单明细数据构造(从购物车复制、设置订单id)
         List<OrderDetail> orderDetailList = new ArrayList<>();
         for (ShoppingCart cart : shoppingCartList) {
             OrderDetail orderDetail = new OrderDetail();
@@ -191,10 +195,7 @@ public class OrderServiceImpl implements OrderService {
         return orderSubmitVO;
     }
 
-    @Autowired
-    private UserMapper userMapper;
-    @Autowired
-    private WeChatPayUtil weChatPayUtil;
+
     /**
      * 订单支付
      *
@@ -237,6 +238,7 @@ public class OrderServiceImpl implements OrderService {
 
         return vo;
     }
+
     /**
      * 支付成功，修改订单状态
      *
@@ -307,15 +309,18 @@ public class OrderServiceImpl implements OrderService {
      * @return
      */
     public PageResult pageQuery4User(int pageNum, int pageSize, Integer status) {
+        //1.设置分页参数
         PageHelper.startPage(pageNum, pageSize);
+        //2.构造分页查询对象（复制查询条件）
         OrdersPageQueryDTO ordersPageQueryDTO = new OrdersPageQueryDTO();
         ordersPageQueryDTO.setUserId(BaseContext.getCurrentId());
         ordersPageQueryDTO.setStatus(status);
 
+        //3.执行分页查询，调用统一的逻辑
         Page<Orders> page = orderMapper.pageQuery(ordersPageQueryDTO);
         List<OrderVO> list = new ArrayList<>();
 
-        //查询订单明细，封装进OrderVO响应
+        //4.对每个订单，查询订单明细(1：n)，封装进orderVO对象
         if (page !=null && page.getTotal()>0) {
             for (Orders orders : page){
                 Long orderId = orders.getId(); //订单id
@@ -327,6 +332,7 @@ public class OrderServiceImpl implements OrderService {
                 list.add(orderVO);
             }
         }
+        // 5. 返回分页查询结果，包括总数和当前页的订单数据
         return new PageResult(page.getTotal(), list);
     }
 
@@ -337,15 +343,15 @@ public class OrderServiceImpl implements OrderService {
      * @return
      */
     public OrderVO details(Long id) {
-        // 根据id查询订单
+        // 1.根据id查询订单
         Orders orders = orderMapper.getById(id);
 
-        // 查询该订单对应的菜品/套餐明细
+        // 2.查询该订单对应的菜品/套餐明细（订单详情表order_detail）
         List<OrderDetail> orderDetailList = orderDetailMapper.getByOrderId(orders.getId());
 
-        // 将该订单及其详情封装到OrderVO并返回
+        // 3.将该订单及其详情封装到OrderVO并返回
         OrderVO orderVO = new OrderVO();
-        BeanUtils.copyProperties(orders, orderVO);
+        BeanUtils.copyProperties(orders, orderVO); //订单id
         orderVO.setOrderDetailList(orderDetailList);
 
         return orderVO;
@@ -357,15 +363,16 @@ public class OrderServiceImpl implements OrderService {
      * @param id
      */
     public void userCancelById(Long id) throws Exception {
-        // 根据id查询订单
+        // 1.根据id查询订单
         Orders ordersDB = orderMapper.getById(id);
 
-        // 校验订单是否存在
+        // 2.校验订单是否存在
         if (ordersDB == null) {
             throw new OrderBusinessException(MessageConstant.ORDER_NOT_FOUND);
         }
 
-        //订单状态 1待付款 2待接单 3已接单 4派送中 5已完成 6已取消
+        // 订单状态 1待付款 2待接单 3已接单 4派送中 5已完成 6已取消
+        // 订单状态待付款，待接单。用户才能取消订单
         if (ordersDB.getStatus() > 2) {
             throw new OrderBusinessException(MessageConstant.ORDER_STATUS_ERROR);
         }
@@ -373,14 +380,14 @@ public class OrderServiceImpl implements OrderService {
         Orders orders = new Orders();
         orders.setId(ordersDB.getId());
 
-        // 订单处于待接单状态下取消，需要进行退款
+        // 3.订单处于待接单状态下取消，需要进行退款
         if (ordersDB.getStatus().equals(Orders.TO_BE_CONFIRMED)) {
             //调用微信支付退款接口
-            weChatPayUtil.refund(
-                    ordersDB.getNumber(), //商户订单号
-                    ordersDB.getNumber(), //商户退款单号
-                    new BigDecimal(0.01),//退款金额，单位 元
-                    new BigDecimal(0.01));//原订单金额
+//            weChatPayUtil.refund(
+//                    ordersDB.getNumber(), //商户订单号
+//                    ordersDB.getNumber(), //商户退款单号
+//                    new BigDecimal(0.01),//退款金额，单位 元
+//                    new BigDecimal(0.01));//原订单金额
 
             //支付状态修改为 退款
             orders.setPayStatus(Orders.REFUND);
@@ -399,13 +406,13 @@ public class OrderServiceImpl implements OrderService {
      * @param id
      */
     public void repetition(Long id) {
-        // 查询当前用户id
+        // 1.查询当前用户id
         Long userId = BaseContext.getCurrentId();
 
-        // 根据订单id查询当前订单详情
+        // 2.根据订单id查询当前订单详情
         List<OrderDetail> orderDetailList = orderDetailMapper.getByOrderId(id);
 
-        // 将订单详情对象转换为购物车对象
+        // 3.将订单详情对象转换为购物车对象
         List<ShoppingCart> shoppingCartList = orderDetailList.stream().map(x -> {
             ShoppingCart shoppingCart = new ShoppingCart();
 
@@ -428,8 +435,9 @@ public class OrderServiceImpl implements OrderService {
      * @return
      */
     public PageResult conditionSearch(OrdersPageQueryDTO ordersPageQueryDTO) {
+        // 1.设置分页参数
         PageHelper.startPage(ordersPageQueryDTO.getPage(), ordersPageQueryDTO.getPageSize());
-
+        // 2.分页查询订单
         Page<Orders> page = orderMapper.pageQuery(ordersPageQueryDTO);
 
         // 部分订单状态，需要额外返回订单菜品信息，将Orders转化为OrderVO
@@ -438,18 +446,60 @@ public class OrderServiceImpl implements OrderService {
         return new PageResult(page.getTotal(), orderVOList);
     }
 
+
+    /**
+      辅助方法：将Page<Orders>类型的分页查询结果转化为List<OrderVO>类型的结果
+      其中，OrderVO是自定义的响应结果类，包含了订单的基本信息和订单菜品信息
+      它在原有的订单字段之上额外带了一个orderDishes字段，用于存储订单菜品信息
+     */
+    private List<OrderVO> getOrderVOList(Page<Orders> page) {
+        // 需要返回订单菜品信息，自定义OrderVO响应结果
+        List<OrderVO> orderVOList = new ArrayList<>();
+
+        List<Orders> ordersList = page.getResult();
+        if (!CollectionUtils.isEmpty(ordersList)) {
+            for (Orders orders : ordersList) {
+                // 将共同字段复制到OrderVO
+                OrderVO orderVO = new OrderVO();
+                BeanUtils.copyProperties(orders, orderVO);
+                String orderDishes = getOrderDishesStr(orders);
+
+                // 将订单菜品信息封装到orderVO中，并添加到orderVOList
+                orderVO.setOrderDishes(orderDishes);
+                orderVOList.add(orderVO);
+            }
+        }
+        return orderVOList;
+    }
+
+    private String getOrderDishesStr(Orders orders) {
+        // 查询订单菜品详情信息（订单中的菜品和数量）
+        List<OrderDetail> orderDetailList = orderDetailMapper.getByOrderId(orders.getId());
+
+        // 将每一条订单菜品信息拼接为字符串（格式：宫保鸡丁*3；）
+        List<String> orderDishList = orderDetailList.stream().map(x -> {
+            String orderDish = x.getName() + "*" + x.getNumber() + ";";
+            return orderDish;
+        }).collect(Collectors.toList());
+
+        // 将该订单对应的所有菜品信息拼接在一起
+        return String.join("", orderDishList);
+    }
+
+
+
     /**
      * 各个状态的订单数量统计
      *
      * @return
      */
     public OrderStatisticsVO statistics() {
-        // 根据状态，分别查询出待接单、待派送、派送中的订单数量
+        // 1.根据状态，分别查询出待接单、待派送、派送中的订单数量
         Integer toBeConfirmed = orderMapper.countStatus(Orders.TO_BE_CONFIRMED);
         Integer confirmed = orderMapper.countStatus(Orders.CONFIRMED);
         Integer deliveryInProgress = orderMapper.countStatus(Orders.DELIVERY_IN_PROGRESS);
 
-        // 将查询出的数据封装到orderStatisticsVO中响应
+        // 2.将查询出的数据封装到orderStatisticsVO中响应
         OrderStatisticsVO orderStatisticsVO = new OrderStatisticsVO();
         orderStatisticsVO.setToBeConfirmed(toBeConfirmed);
         orderStatisticsVO.setConfirmed(confirmed);
@@ -671,45 +721,9 @@ public class OrderServiceImpl implements OrderService {
         webSocketServer.sendToAllClient(JSON.toJSONString(map));
     }
 
-    private List<OrderVO> getOrderVOList(Page<Orders> page) {
-        // 需要返回订单菜品信息，自定义OrderVO响应结果
-        List<OrderVO> orderVOList = new ArrayList<>();
 
-        List<Orders> ordersList = page.getResult();
-        if (!CollectionUtils.isEmpty(ordersList)) {
-            for (Orders orders : ordersList) {
-                // 将共同字段复制到OrderVO
-                OrderVO orderVO = new OrderVO();
-                BeanUtils.copyProperties(orders, orderVO);
-                String orderDishes = getOrderDishesStr(orders);
 
-                // 将订单菜品信息封装到orderVO中，并添加到orderVOList
-                orderVO.setOrderDishes(orderDishes);
-                orderVOList.add(orderVO);
-            }
-        }
-        return orderVOList;
-    }
 
-    /**
-     * 根据订单id获取菜品信息字符串
-     *
-     * @param orders
-     * @return
-     */
-    private String getOrderDishesStr(Orders orders) {
-        // 查询订单菜品详情信息（订单中的菜品和数量）
-        List<OrderDetail> orderDetailList = orderDetailMapper.getByOrderId(orders.getId());
-
-        // 将每一条订单菜品信息拼接为字符串（格式：宫保鸡丁*3；）
-        List<String> orderDishList = orderDetailList.stream().map(x -> {
-            String orderDish = x.getName() + "*" + x.getNumber() + ";";
-            return orderDish;
-        }).collect(Collectors.toList());
-
-        // 将该订单对应的所有菜品信息拼接在一起
-        return String.join("", orderDishList);
-    }
 
 
 }

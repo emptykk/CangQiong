@@ -59,6 +59,8 @@ public class OrderController {
         log.info("订单支付：{}", ordersPaymentDTO);
         OrderPaymentVO orderPaymentVO = orderService.payment(ordersPaymentDTO);
         log.info("生成预支付交易单：{}", orderPaymentVO);
+        // 模拟支付成功，更新数据库订单状态 -此时没有回调
+        orderService.paySuccess(ordersPaymentDTO.getOrderNumber());
         return Result.success(orderPaymentVO);
     }
 
@@ -72,8 +74,7 @@ public class OrderController {
      */
     @GetMapping("/historyOrders")
     @ApiOperation("历史订单查询")
-    public Result<PageResult> historyOrders(int page, int pageSize, Integer status) {
-        log.info("历史订单查询：页码={}，每页记录数={}，订单状态={}", page, pageSize, status);
+    public Result<PageResult> page(int page, int pageSize, Integer status) {
         PageResult pageResult = orderService.pageQuery4User(page, pageSize, status);
         return Result.success(pageResult);
     }
